@@ -22,6 +22,10 @@ function formatHouseholdError(err: unknown, fallback: string) {
     errorMessage =
       "Supabase schema missing households.owner_id. Run supabase/migrations/2026-05-24_add_households_owner_id.sql in Supabase SQL editor, then retry.";
   }
+  if (errorMessage.includes("PGRST204") && errorMessage.includes("household_members")) {
+    errorMessage =
+      "Supabase household_members table is missing app columns. Run supabase/migrations/2026-05-24_sync_household_schema.sql in Supabase SQL editor, then retry.";
+  }
   if (errorMessage.includes("row-level security") && errorMessage.includes("household_members")) {
     errorMessage =
       "Supabase blocked owner member creation. Run supabase/migrations/2026-05-24_allow_owner_initial_member.sql in Supabase SQL editor, then retry.";
