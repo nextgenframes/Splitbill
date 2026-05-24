@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, CheckCircle2, FileText, Loader2, Send, Sparkles, UploadCloud } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,10 +36,12 @@ type ExtractionMeta = {
 };
 
 export function BillUploadForm({ members }: { members: { name: string; weight: number }[] }) {
+  const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [bill, setBill] = useState<ExtractedBill>(emptyBill);
   const [splitMode, setSplitMode] = useState<"equal" | "weighted">("equal");
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [meta, setMeta] = useState<ExtractionMeta | null>(null);
 
@@ -85,6 +88,45 @@ export function BillUploadForm({ members }: { members: { name: string; weight: n
     }
 
     setLoading(false);
+  }
+
+  async function saveBill() {
+    if (!file) {
+      setMessage("Choose bill proof first.");
+      return;
+    }
+
+    setSaving(true);
+    setMessage("");
+
+    const body = new FormData();
+    body.append("file", file);
+    body.append("provider", bill.provider);
+    body.append("billType", bill.billType);
+    body.append("amount", bill.amount);
+    body.append("dueDate", bill.dueDate);
+    body.append("billingPeriod", bill.billingPeriod);
+    body.append("serviceAddress", bill.serviceAddress);
+    body.append("splitMode", splitMode);
+    body.append("ocrMeta", JSON.stringify(meta ?? {}));
+
+    try {
+      const response = await fetch("/api/bills", { method: "POST", body });
+      const result = await response.json();
+
+      if (!response.ok) {
+        setMessage(result.error ?? "Bill save failed.");
+        return;
+      }
+
+      setMessage(result.message ?? "Bill saved.");
+      router.push(result.createdRequests ? "/payments" : "/dashboard");
+      router.refresh();
+    } catch {
+      setMessage("Bill save failed.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -147,9 +189,9 @@ export function BillUploadForm({ members }: { members: { name: string; weight: n
             </div>
           </div>
 
-          <Button className="w-full" size="lg">
-            <Send className="h-4 w-4" />
-            {meta?.needsManualReview ? "Confirm and save bill" : "Save bill and send requests"}
+          <Button className="w-full" size="lg" onClick={saveBill} disabled={!file || saving || loading}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            {saving ? "Saving bill..." : meta?.needsManualReview ? "Confirm and save bill" : "Save bill and send requests"}
           </Button>
         </CardContent>
       </Card>

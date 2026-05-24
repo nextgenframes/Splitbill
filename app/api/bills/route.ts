@@ -1,0 +1,192 @@
+import { randomUUID } from "node:crypto";
+import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+
+export const runtime = "nodejs";
+
+const providerPriority = ["venmo", "cash_app", "paypal", "zelle"] as const;
+
+export async function POST(request: Request) {
+  const supabase = await createClient();
+  if (!supabase) return NextResponse.json({ error: "Supabase env missing" }, { status: 500 });
+
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return NextResponse.json({ error: "Login required" }, { status: 401 });
+
+  const form = await request.formData();
+  const file = form.get("file");
+  const utilityProvider = String(form.get("provider") ?? "").trim();
+  const billType = String(form.get("billType") ?? "").trim();
+  const amount = Number(form.get("amount") ?? 0);
+  const dueDate = String(form.get("dueDate") ?? "").trim();
+  const billingPeriod = String(form.get("billingPeriod") ?? "").trim();
+  const serviceAddress = String(form.get("serviceAddress") ?? "").trim();
+  const splitMode = form.get("splitMode") === "weighted" ? "weighted" : "equal";
+  const ocrMetaRaw = String(form.get("ocrMeta") ?? "{}");
+
+  if (!(file instanceof File)) return NextResponse.json({ error: "Bill proof file required" }, { status: 400 });
+  if (!utilityProvider) return NextResponse.json({ error: "Utility provider required" }, { status: 400 });
+  if (!["electric", "water", "garbage", "internet"].includes(billType)) {
+    return NextResponse.json({ error: "Bill type must be electric, water, garbage, or internet" }, { status: 400 });
+  }
+  if (!Number.isFinite(amount) || amount <= 0) return NextResponse.json({ error: "Bill amount must be greater than 0" }, { status: 400 });
+
+  const { data: households, error: householdError } = await supabase
+    .from("households")
+    .select("id")
+    .order("created_at", { ascending: true })
+    .limit(1);
+  if (householdError) return NextResponse.json({ error: householdError.message }, { status: 400 });
+
+  const householdId = households?.[0]?.id;
+  if (!householdId) return NextResponse.json({ error: "Create household first" }, { status: 400 });
+
+  const { data: members, error: membersError } = await supabase
+    .from("household_members")
+    .select("id,email,name,display_name,split_weight")
+    .eq("household_id", householdId)
+    .order("created_at", { ascending: true });
+  if (membersError) return NextResponse.json({ error: membersError.message }, { status: 400 });
+  if (!members?.length) return NextResponse.json({ error: "Add household members first" }, { status: 400 });
+
+  const { data: accounts, error: accountsError } = await supabase
+    .from("payment_accounts")
+    .select("provider,handle,is_enabled")
+    .eq("household_id", householdId)
+    .eq("is_enabled", true)
+    .order("created_at", { ascending: true });
+  if (accountsError) return NextResponse.json({ error: accountsError.message }, { status: 400 });
+
+  const proofPath = `${householdId}/${randomUUID()}-${sanitizeFilename(file.name)}`;
+  const { error: uploadError } = await supabase.storage.from("bill-proofs").upload(proofPath, file, {
+    cacheControl: "3600",
+    upsert: false,
+    contentType: file.type || "application/octet-stream"
+  });
+  if (uploadError) return NextResponse.json({ error: uploadError.message }, { status: 400 });
+
+  let parsedMeta: {
+    confidence?: { overall?: number };
+    needsManualReview?: boolean;
+    validationIssues?: string[];
+    source?: string;
+  } = {};
+  try {
+    parsedMeta = JSON.parse(ocrMetaRaw || "{}");
+  } catch {
+    parsedMeta = {};
+  }
+
+  const { data: bill, error: billError } = await supabase
+    .from("bills")
+    .insert({
+      household_id: householdId,
+      uploaded_by: auth.user.id,
+      utility_provider: utilityProvider,
+      bill_type: billType,
+      amount,
+      due_date: dueDate || null,
+      billing_period: billingPeriod || null,
+      service_address: serviceAddress || null,
+      split_mode: splitMode,
+      status: "scheduled",
+      proof_path: proofPath,
+      ocr_confidence: parsedMeta.confidence?.overall ?? 0,
+      needs_manual_review: parsedMeta.needsManualReview ?? true,
+      ocr_payload: parsedMeta
+    })
+    .select("id")
+    .single();
+  if (billError) return NextResponse.json({ error: billError.message }, { status: 400 });
+
+  const totalWeight =
+    splitMode === "equal" ? members.length : members.reduce((sum, member) => sum + Number(member.split_weight || 1), 0);
+
+  const splitRows = members.map((member, index) => {
+    const weight = splitMode === "equal" ? 1 : Number(member.split_weight || 1);
+    const rawAmount = totalWeight ? (amount * weight) / totalWeight : 0;
+    const roundedAmount =
+      index === members.length - 1
+        ? roundMoney(amount - members.slice(0, index).reduce((sum, prev) => sum + roundMoney(totalWeight ? (amount * (splitMode === "equal" ? 1 : Number(prev.split_weight || 1))) / totalWeight : 0), 0))
+        : roundMoney(rawAmount);
+    return {
+      bill_id: bill.id,
+      member_id: member.id,
+      amount: roundedAmount,
+      status: "unpaid" as const
+    };
+  });
+
+  const { data: splits, error: splitsError } = await supabase.from("bill_splits").insert(splitRows).select("id,member_id,amount");
+  if (splitsError) return NextResponse.json({ error: splitsError.message }, { status: 400 });
+
+  const defaultAccount =
+    providerPriority
+      .map((provider) => accounts?.find((account) => account.provider === provider))
+      .find(Boolean) ?? null;
+
+  let createdRequests = 0;
+  if (defaultAccount) {
+    const requestRows = splits.map((split) => ({
+      bill_id: bill.id,
+      split_id: split.id,
+      member_id: split.member_id,
+      utility_name: utilityProvider,
+      total_bill: amount,
+      user_share: Number(split.amount),
+      due_date: dueDate || null,
+      proof_path: proofPath,
+      provider: defaultAccount.provider,
+      payment_target: defaultAccount.handle,
+      payment_url: null,
+      zelle_instructions:
+        defaultAccount.provider === "zelle" ? `Send to ${defaultAccount.handle} with note ${utilityProvider} ${dueDate || ""}`.trim() : null,
+      status: "pending" as const
+    }));
+
+    const { data: requests, error: requestError } = await supabase
+      .from("payment_requests")
+      .insert(requestRows)
+      .select("id,member_id");
+    if (requestError) return NextResponse.json({ error: requestError.message }, { status: 400 });
+
+    createdRequests = requests?.length ?? 0;
+
+    if (dueDate && requests?.length) {
+      const reminderRows = requests.flatMap((paymentRequest) =>
+        [-3, 0, 2].map((offset) => ({
+          payment_request_id: paymentRequest.id,
+          member_id: paymentRequest.member_id,
+          scheduled_for: shiftDueDate(dueDate, offset),
+          status: "scheduled"
+        }))
+      );
+      const { error: reminderError } = await supabase.from("reminder_events").insert(reminderRows);
+      if (reminderError) return NextResponse.json({ error: reminderError.message }, { status: 400 });
+    }
+  }
+
+  return NextResponse.json({
+    ok: true,
+    billId: bill.id,
+    proofPath,
+    createdRequests,
+    message: createdRequests
+      ? "Bill saved and payment requests created."
+      : "Bill saved. Add payment accounts to create payment requests."
+  });
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function sanitizeFilename(name: string) {
+  return name.replace(/[^a-zA-Z0-9._-]/g, "-");
+}
+
+function shiftDueDate(isoDate: string, offsetDays: number) {
+  const base = new Date(`${isoDate}T09:00:00.000Z`);
+  base.setUTCDate(base.getUTCDate() + offsetDays);
+  return base.toISOString();
+}
