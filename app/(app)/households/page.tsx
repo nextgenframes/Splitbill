@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/server";
 import { initials } from "@/lib/utils";
-import { addMember, createHousehold, removeMember, renameHousehold, updateMember } from "./actions";
+import { addMember, createHousehold, removeMember, renameHousehold, repairOwnerMembership, updateMember } from "./actions";
 
 export default async function HouseholdsPage({
   searchParams
@@ -71,6 +71,7 @@ export default async function HouseholdsPage({
 
   const inviteLink = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3001"}/join?code=${active.invite_code}`;
   const isOwner = active.owner_id === user.id;
+  const hasOwnerMember = (members ?? []).some((member) => member.user_id === user.id && member.role === "owner");
 
   return (
     <div className="grid gap-5 pb-24 lg:grid-cols-[1fr_0.8fr] md:pb-0">
@@ -87,6 +88,18 @@ export default async function HouseholdsPage({
             <p className="rounded-2xl border bg-amber-50 p-4 text-sm text-amber-900">
               {decodeURIComponent(params.error)}
             </p>
+          ) : null}
+          {isOwner && !hasOwnerMember ? (
+            <form action={repairOwnerMembership} className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+              <input type="hidden" name="householdId" value={active.id} />
+              <p className="font-semibold">Owner access needs repair</p>
+              <p className="mt-1 text-amber-900">
+                This household was created, but your owner member record is missing. Repair it to enable members and bills.
+              </p>
+              <Button type="submit" variant="dark" className="mt-3 min-h-11">
+                Repair owner access
+              </Button>
+            </form>
           ) : null}
           <form action={renameHousehold} className="grid gap-3 rounded-2xl border bg-background/70 p-4 sm:grid-cols-[1fr_auto] sm:items-end">
             <input type="hidden" name="householdId" value={active.id} />
