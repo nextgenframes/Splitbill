@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { WalletCards } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,26 +10,61 @@ import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/browser";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
 
-  async function signIn() {
+  const hashError = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    const raw = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+    if (!raw) return null;
+    const params = new URLSearchParams(raw);
+    const error = params.get("error");
+    const code = params.get("error_code");
+    const desc = params.get("error_description");
+    if (!error && !desc) return null;
+    return { error, code, desc };
+  }, []);
+
+  useEffect(() => {
+    if (!hashError) return;
+    const text = hashError.desc
+      ? decodeURIComponent(hashError.desc.replaceAll("+", " "))
+      : "Sign-in link error.";
+    setMessage(
+      `${text} If this keeps happening, your email app may be pre-opening the link. Try copying link into Safari/Chrome, or hit resend.`
+    );
+    // Clear fragment so refresh doesn't keep re-showing.
+    window.history.replaceState(null, "", window.location.pathname);
+  }, [hashError]);
+
+  async function submit() {
     setLoading(true);
     setMessage("");
 
     try {
       const supabase = createClient();
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`
-        }
-      });
+      if (mode === "signin") {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        router.replace("/dashboard");
+        return;
+      }
 
-      setMessage(error ? error.message : "Magic link sent. Check inbox.");
-    } catch {
-      setMessage("Add Supabase env values to enable login.");
+      const { error } = await supabase.auth.signUp({ email, password });
+      if (error) throw error;
+      setMessage("Account created. You can sign in now.");
+      setMode("signin");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Supabase config error.";
+      setMessage(
+        msg === "Failed to fetch"
+          ? "Failed to fetch Supabase. Check NEXT_PUBLIC_SUPABASE_URL is https://<project-ref>.supabase.co and env vars are deployed. Try /api/supabase-health."
+          : msg
+      );
     } finally {
       setLoading(false);
     }
@@ -47,6 +83,27 @@ export default function LoginPage() {
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 rounded-2xl border bg-muted p-1">
+            <button
+              type="button"
+              onClick={() => setMode("signin")}
+              className={`min-h-11 rounded-xl text-sm font-medium transition ${
+                mode === "signin" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("signup")}
+              className={`min-h-11 rounded-xl text-sm font-medium transition ${
+                mode === "signup" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Create account
+            </button>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <Input
@@ -57,9 +114,21 @@ export default function LoginPage() {
               onChange={(event) => setEmail(event.target.value)}
             />
           </div>
-          <Button className="w-full" onClick={signIn} disabled={loading || !email}>
-            {loading ? "Sending..." : "Send magic link"}
+          <div className="space-y-2">
+            <Label htmlFor="password">Password</Label>
+            <Input
+              id="password"
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </div>
+
+          <Button className="w-full min-h-12" onClick={submit} disabled={loading || !email || password.length < 8} variant="dark">
+            {loading ? "Working..." : mode === "signin" ? "Sign in" : "Create account"}
           </Button>
+          <p className="text-xs text-muted-foreground">Password minimum 8 characters.</p>
           {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
         </CardContent>
       </Card>
