@@ -51,13 +51,17 @@ export default async function PaymentsPage() {
     : { data: null };
 
   const { data: members } = householdId
-    ? await supabase.from("household_members").select("id,email,display_name").eq("household_id", householdId)
+    ? await supabase.from("household_members").select("id,email,name,display_name").eq("household_id", householdId)
     : { data: null };
 
   const normalized =
     (requests ?? []).map((request) => ({
       id: request.id,
-      roommate: (members ?? []).find((m) => m.id === request.member_id)?.display_name || (members ?? []).find((m) => m.id === request.member_id)?.email || "Member",
+      roommate:
+        (members ?? []).find((m) => m.id === request.member_id)?.display_name ||
+        (members ?? []).find((m) => m.id === request.member_id)?.name ||
+        (members ?? []).find((m) => m.id === request.member_id)?.email ||
+        "Member",
       utilityName: request.utility_name,
       totalBill: Number(request.total_bill),
       userShare: Number(request.user_share),
@@ -192,6 +196,7 @@ export default async function PaymentsPage() {
               {(reminderEvents ?? []).map((event) => {
                 const roommate =
                   (members ?? []).find((m) => m.id === event.member_id)?.display_name ||
+                  (members ?? []).find((m) => m.id === event.member_id)?.name ||
                   (members ?? []).find((m) => m.id === event.member_id)?.email ||
                   "Member";
                 return (
@@ -219,6 +224,7 @@ export default async function PaymentsPage() {
               {(history ?? []).map((payment) => {
                 const roommate =
                   (members ?? []).find((m) => m.id === payment.member_id)?.display_name ||
+                  (members ?? []).find((m) => m.id === payment.member_id)?.name ||
                   (members ?? []).find((m) => m.id === payment.member_id)?.email ||
                   "Member";
                 const method = payment.provider === "cash_app" ? "Cash App" : payment.provider === "paypal" ? "PayPal" : payment.provider === "venmo" ? "Venmo" : "Zelle";

@@ -14,12 +14,12 @@ export default async function NewBillPage() {
     if (householdId) {
       const { data } = await supabase
         .from("household_members")
-        .select("email,display_name,split_weight")
+        .select("email,name,display_name,split_weight")
         .eq("household_id", householdId)
         .order("created_at", { ascending: true });
       members =
         data?.map((m) => ({
-          name: m.display_name || m.email,
+          name: m.display_name || m.name || m.email,
           weight: Number(m.split_weight)
         })) ?? [];
     }

@@ -33,11 +33,20 @@ end $$;
 
 alter table public.household_members
 add column if not exists user_id uuid references auth.users(id) on delete cascade,
+add column if not exists name text,
 add column if not exists display_name text,
 add column if not exists role household_role not null default 'member',
 add column if not exists split_weight numeric(8, 2) not null default 1,
 add column if not exists joined_at timestamptz,
 add column if not exists created_at timestamptz not null default now();
+
+update public.household_members
+set name = coalesce(nullif(name, ''), nullif(display_name, ''), email)
+where name is null or name = '';
+
+alter table public.household_members
+alter column name set default '',
+alter column name set not null;
 
 delete from public.household_members a
 using public.household_members b

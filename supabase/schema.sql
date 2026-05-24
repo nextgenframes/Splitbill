@@ -23,6 +23,7 @@ create table public.household_members (
   household_id uuid not null references public.households(id) on delete cascade,
   user_id uuid references auth.users(id) on delete cascade,
   email text not null,
+  name text not null,
   display_name text,
   role household_role not null default 'member',
   split_weight numeric(8, 2) not null default 1 check (split_weight > 0),

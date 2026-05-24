@@ -39,7 +39,7 @@ export default async function DashboardPage() {
 
   const householdId = household?.id;
   const { data: members } = householdId
-    ? await supabase.from("household_members").select("id,email,display_name,split_weight").eq("household_id", householdId)
+    ? await supabase.from("household_members").select("id,email,name,display_name,split_weight").eq("household_id", householdId)
     : { data: null };
 
   const { data: requests } = householdId
@@ -110,7 +110,7 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {(members ?? []).map((member) => {
-              const label = member.display_name || member.email;
+              const label = member.display_name || member.name || member.email;
               const memberBalance = (requests ?? [])
                 .filter((r) => r.member_id === member.id)
                 .reduce((sum, r) => sum + Number(r.user_share), 0);

@@ -22,6 +22,7 @@ async function saveOwnerMember(
     household_id: householdId,
     user_id: owner.id,
     email: owner.email ?? "unknown",
+    name: owner.user_metadata?.full_name ?? owner.email ?? "Owner",
     display_name: owner.user_metadata?.full_name ?? owner.email ?? "Owner",
     role: "owner",
     split_weight: 1,
@@ -67,6 +68,10 @@ function formatHouseholdError(err: unknown, fallback: string) {
   if (errorMessage.includes("row-level security") && errorMessage.includes("household_members")) {
     errorMessage =
       "Supabase blocked owner member creation. Run supabase/migrations/2026-05-24_allow_owner_initial_member.sql in Supabase SQL editor, then retry.";
+  }
+  if (errorMessage.includes("null value") && errorMessage.includes("household_members") && errorMessage.includes("\"name\"")) {
+    errorMessage =
+      "Supabase household_members.name is required in your live database. The app has been updated for it, and you should also run supabase/migrations/2026-05-24_sync_household_schema.sql.";
   }
   return errorMessage;
 }
@@ -186,6 +191,7 @@ export async function addMember(formData: FormData) {
       household_id: householdId,
       user_id: null,
       email,
+      name: displayNameRaw || email,
       display_name: displayNameRaw ? displayNameRaw : null,
       role: "member",
       split_weight: splitWeight
@@ -220,7 +226,7 @@ export async function updateMember(formData: FormData) {
     const { error } = await supabase
       .from("household_members")
       .update({
-        display_name: displayNameRaw ? displayNameRaw : null,
+        ...(displayNameRaw ? { name: displayNameRaw, display_name: displayNameRaw } : {}),
         split_weight: splitWeight
       })
       .eq("id", memberId);

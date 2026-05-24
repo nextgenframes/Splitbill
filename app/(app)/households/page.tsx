@@ -39,7 +39,7 @@ export default async function HouseholdsPage({
   const { data: members } = active
     ? await supabase
         .from("household_members")
-        .select("id,email,display_name,split_weight,role,user_id")
+        .select("id,email,name,display_name,split_weight,role,user_id")
         .eq("household_id", active.id)
         .order("created_at", { ascending: true })
     : { data: null };
@@ -117,7 +117,7 @@ export default async function HouseholdsPage({
             </div>
 
             {(members ?? []).map((member) => {
-              const label = member.display_name || member.email;
+              const label = member.display_name || member.name || member.email;
               const isProtected = member.role === "owner";
               return (
                 <div key={member.id} className="rounded-2xl border bg-background/70 p-4">
@@ -142,7 +142,7 @@ export default async function HouseholdsPage({
                       <input type="hidden" name="memberId" value={member.id} />
                       <div className="space-y-2">
                         <Label>Display name</Label>
-                        <Input name="displayName" defaultValue={member.display_name ?? ""} placeholder={member.email} />
+                        <Input name="displayName" defaultValue={member.display_name ?? member.name ?? ""} placeholder={member.email} />
                       </div>
                       <div className="space-y-2">
                         <Label>Split weight</Label>
