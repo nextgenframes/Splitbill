@@ -8,11 +8,15 @@ import { createClient } from "@/lib/supabase/server";
 const idSchema = z.string().uuid();
 
 export async function createHousehold(formData: FormData) {
+  // Temporary debug logs
+  console.log("createHousehold: formData entries:", Object.fromEntries(formData));
+
   // Auth check first - redirect if not authenticated (this redirect throws and is not caught below)
   const supabase = await createClient();
   if (!supabase) throw new Error("Supabase env missing");
 
   const { data: auth } = await supabase.auth.getUser();
+  console.log("createHousehold: authenticated user:", auth.user?.id || "null");
   if (!auth.user) redirect("/login");
 
   let errorMessage = null;
@@ -20,12 +24,16 @@ export async function createHousehold(formData: FormData) {
 
   try {
     const name = z.string().min(2).max(64).parse(formData.get("name"));
+    console.log("createHousehold: parsed name:", name);
 
     const { data: household, error } = await supabase
       .from("households")
       .insert({ name, owner_id: auth.user.id })
       .select("id")
       .single();
+
+    console.log("createHousehold: supabase insert result:", { household, error });
+
     if (error) throw error;
 
     await supabase.from("household_members").upsert({
@@ -39,8 +47,10 @@ export async function createHousehold(formData: FormData) {
     });
 
     householdId = household.id;
+    console.log("createHousehold: successfully created household with id:", householdId);
   } catch (err) {
     errorMessage = err instanceof Error ? err.message : "Failed to create household";
+    console.log("createHousehold: error caught:", errorMessage);
     if (errorMessage.includes("PGRST204") && errorMessage.includes("owner_id")) {
       errorMessage =
         "Supabase schema missing households.owner_id. Run supabase/migrations/2026-05-24_add_households_owner_id.sql in Supabase SQL editor, then retry.";
@@ -48,8 +58,10 @@ export async function createHousehold(formData: FormData) {
   }
 
   if (errorMessage) {
+    console.log("createHousehold: redirecting to error page with message:", errorMessage);
     redirect(`/households?error=${encodeURIComponent(errorMessage)}`);
   } else {
+    console.log("createHousehold: redirecting to household page with id:", householdId);
     revalidatePath("/households");
     redirect(`/households?householdId=${householdId}`);
   }
