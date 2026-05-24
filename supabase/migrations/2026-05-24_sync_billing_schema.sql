@@ -126,6 +126,9 @@ alter table public.bills enable row level security;
 drop policy if exists "members create bills" on public.bills;
 drop policy if exists "members read bills" on public.bills;
 drop policy if exists "members update bills" on public.bills;
+drop policy if exists "owners read bills" on public.bills;
+drop policy if exists "owners create bills" on public.bills;
+drop policy if exists "owners update bills" on public.bills;
 drop policy if exists "members manage splits" on public.bill_splits;
 drop policy if exists "members read splits" on public.bill_splits;
 drop policy if exists "members read payment requests" on public.payment_requests;
@@ -141,13 +144,44 @@ create policy "members read bills"
 on public.bills for select
 using (public.is_household_member(household_id));
 
+create policy "owners read bills"
+on public.bills for select
+using (
+  exists (
+    select 1 from public.households h
+    where h.id = bills.household_id
+      and h.owner_id = auth.uid()
+  )
+);
+
 create policy "members create bills"
 on public.bills for insert
 with check (public.is_household_member(household_id) and uploaded_by = auth.uid());
 
+create policy "owners create bills"
+on public.bills for insert
+with check (
+  uploaded_by = auth.uid()
+  and exists (
+    select 1 from public.households h
+    where h.id = bills.household_id
+      and h.owner_id = auth.uid()
+  )
+);
+
 create policy "members update bills"
 on public.bills for update
 using (public.is_household_member(household_id));
+
+create policy "owners update bills"
+on public.bills for update
+using (
+  exists (
+    select 1 from public.households h
+    where h.id = bills.household_id
+      and h.owner_id = auth.uid()
+  )
+);
 
 create policy "members read splits"
 on public.bill_splits for select

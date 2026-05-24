@@ -35,20 +35,56 @@ export async function POST(request: Request) {
 
   const { data: households, error: householdError } = await supabase
     .from("households")
-    .select("id")
+    .select("id,owner_id")
     .order("created_at", { ascending: true })
     .limit(1);
   if (householdError) return NextResponse.json({ error: householdError.message }, { status: 400 });
 
-  const householdId = households?.[0]?.id;
+  const household = households?.[0] ?? null;
+  const householdId = household?.id;
   if (!householdId) return NextResponse.json({ error: "Create household first" }, { status: 400 });
 
-  const { data: members, error: membersError } = await supabase
+  let { data: members, error: membersError } = await supabase
     .from("household_members")
-    .select("id,email,name,display_name,split_weight")
+    .select("id,email,name,display_name,split_weight,user_id,role")
     .eq("household_id", householdId)
     .order("created_at", { ascending: true });
   if (membersError) return NextResponse.json({ error: membersError.message }, { status: 400 });
+
+  const signedInMember = (members ?? []).find((member) => member.user_id === auth.user.id);
+  if (!signedInMember && household?.owner_id === auth.user.id) {
+    const ownerName = auth.user.user_metadata?.full_name ?? auth.user.email ?? "Owner";
+    const { error: repairError } = await supabase.from("household_members").insert({
+      household_id: householdId,
+      user_id: auth.user.id,
+      email: auth.user.email ?? "unknown",
+      name: ownerName,
+      display_name: ownerName,
+      role: "owner",
+      split_weight: 1,
+      joined_at: new Date().toISOString()
+    });
+
+    if (repairError && repairError.code !== "23505") {
+      return NextResponse.json(
+        {
+          error:
+            "Household owner is missing member access. Run supabase/migrations/2026-05-24_sync_household_schema.sql, then retry."
+        },
+        { status: 400 }
+      );
+    }
+
+    const refresh = await supabase
+      .from("household_members")
+      .select("id,email,name,display_name,split_weight,user_id,role")
+      .eq("household_id", householdId)
+      .order("created_at", { ascending: true });
+    members = refresh.data;
+    membersError = refresh.error;
+    if (membersError) return NextResponse.json({ error: membersError.message }, { status: 400 });
+  }
+
   if (!members?.length) return NextResponse.json({ error: "Add household members first" }, { status: 400 });
 
   const warnings: string[] = [];
@@ -98,7 +134,18 @@ export async function POST(request: Request) {
   };
 
   const billResult = await insertWithSchemaFallback(supabase, "bills", billInsert, ["id"]);
-  if (billResult.error) return NextResponse.json({ error: billResult.error.message }, { status: 400 });
+  if (billResult.error) {
+    if (isBillsRlsError(billResult.error)) {
+      return NextResponse.json(
+        {
+          error:
+            "Supabase RLS blocked bill save. Run supabase/migrations/2026-05-24_sync_household_schema.sql and supabase/migrations/2026-05-24_sync_billing_schema.sql, then retry."
+        },
+        { status: 400 }
+      );
+    }
+    return NextResponse.json({ error: billResult.error.message }, { status: 400 });
+  }
   const bill = billResult.data as unknown as InsertBillResult;
   if (billResult.removedColumns.length) {
     warnings.push(`Bills table missing columns: ${billResult.removedColumns.join(", ")}. Saved with reduced schema.`);
@@ -244,6 +291,11 @@ function isMissingSchemaTable(error: { message?: string; code?: string }, table:
 function isMissingBucket(error: { message?: string; code?: string }) {
   const message = `${error.message ?? ""} ${error.code ?? ""}`.toLowerCase();
   return message.includes("bucket not found") || message.includes("bucket") && message.includes("not found");
+}
+
+function isBillsRlsError(error: { message?: string; code?: string }) {
+  const message = `${error.message ?? ""} ${error.code ?? ""}`.toLowerCase();
+  return message.includes("row-level security") && message.includes("bills");
 }
 
 function getMissingColumn(error: { message?: string; code?: string }, relation: string) {
