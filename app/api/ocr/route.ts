@@ -26,30 +26,42 @@ export async function POST(request: Request) {
   const mimeType = file.type || "application/octet-stream";
   const isPdf = mimeType === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 
-  const visionExtraction = await extractWithModel([
-    { text: "Extract structured fields from this utility bill image or PDF." },
-    { inline_data: { mime_type: mimeType, data: base64 } }
-  ]);
+  try {
+    const visionExtraction = await extractWithModel([
+      { text: "Extract structured fields from this utility bill image or PDF." },
+      { inline_data: { mime_type: mimeType, data: base64 } }
+    ]);
 
-  let fallbackExtraction: BillExtraction | undefined;
-  if (isPdf && visionExtraction.needsManualReview) {
-    const pdfText = await extractPdfText(bytes);
-    if (pdfText) {
-      fallbackExtraction = await extractWithModel([
-        {
-          text: `PDF text fallback. Extract fields from this utility bill text:\n\n${pdfText.slice(0, 24000)}`
-        }
-      ]);
-      fallbackExtraction.source = "pdf_text_fallback";
+    let fallbackExtraction: BillExtraction | undefined;
+    if (isPdf && visionExtraction.needsManualReview) {
+      const pdfText = await extractPdfText(bytes);
+      if (pdfText) {
+        fallbackExtraction = await extractWithModel([
+          {
+            text: `PDF text fallback. Extract fields from this utility bill text:\n\n${pdfText.slice(0, 24000)}`
+          }
+        ]);
+        fallbackExtraction.source = "pdf_text_fallback";
+      }
     }
-  }
 
-  return NextResponse.json(mergeExtractions(visionExtraction, fallbackExtraction));
+    return NextResponse.json(mergeExtractions(visionExtraction, fallbackExtraction));
+  } catch (error) {
+    if (isGeminiUnavailable(error)) {
+      return NextResponse.json({
+        success: false,
+        fallback: true,
+        error: "AI extraction unavailable. Please enter bill details manually."
+      });
+    }
+
+    throw error;
+  }
 }
 
 async function extractWithModel(parts: Array<Record<string, unknown>>) {
   const response = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
     {
       method: "POST",
       headers: {
@@ -86,6 +98,11 @@ async function extractWithModel(parts: Array<Record<string, unknown>>) {
   }
 
   return validateExtraction(billExtractionSchema.parse(JSON.parse(rawText)));
+}
+
+function isGeminiUnavailable(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.includes("404") || message.includes("429");
 }
 
 async function extractPdfText(bytes: Buffer) {
