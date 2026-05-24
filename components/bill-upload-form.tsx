@@ -35,6 +35,8 @@ type ExtractionMeta = {
   source: string;
 };
 
+type MessageTone = "neutral" | "warning" | "error" | "success";
+
 export function BillUploadForm({ members }: { members: { name: string; weight: number }[] }) {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
@@ -43,6 +45,7 @@ export function BillUploadForm({ members }: { members: { name: string; weight: n
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<MessageTone>("neutral");
   const [meta, setMeta] = useState<ExtractionMeta | null>(null);
 
   const amount = Number(bill.amount || 0);
@@ -59,6 +62,7 @@ export function BillUploadForm({ members }: { members: { name: string; weight: n
     if (!file) return;
     setLoading(true);
     setMessage("");
+    setMessageTone("neutral");
     setMeta(null);
 
     const body = new FormData();
@@ -83,8 +87,10 @@ export function BillUploadForm({ members }: { members: { name: string; weight: n
         source: result.source ?? "vision"
       });
       setMessage(result.needsManualReview ? "Low confidence. Confirm fields manually before saving." : "Bill details extracted. Review before saving.");
+      setMessageTone(result.needsManualReview ? "warning" : "success");
     } else {
       setMessage(result.error ?? "OCR failed. Enter details manually.");
+      setMessageTone(result.fallback ? "warning" : "error");
     }
 
     setLoading(false);
@@ -93,11 +99,13 @@ export function BillUploadForm({ members }: { members: { name: string; weight: n
   async function saveBill() {
     if (!file) {
       setMessage("Choose bill proof first.");
+      setMessageTone("error");
       return;
     }
 
     setSaving(true);
     setMessage("");
+    setMessageTone("neutral");
 
     const body = new FormData();
     body.append("file", file);
@@ -116,14 +124,18 @@ export function BillUploadForm({ members }: { members: { name: string; weight: n
 
       if (!response.ok) {
         setMessage(result.error ?? "Bill save failed.");
+        setMessageTone("error");
         return;
       }
 
-      setMessage(result.message ?? "Bill saved.");
+      const warningMessage = Array.isArray(result.warnings) && result.warnings.length ? ` ${result.warnings.join(" ")}` : "";
+      setMessage(`${result.message ?? "Bill saved."}${warningMessage}`);
+      setMessageTone(Array.isArray(result.warnings) && result.warnings.length ? "warning" : "success");
       router.push(result.createdRequests ? "/payments" : "/dashboard");
       router.refresh();
     } catch {
       setMessage("Bill save failed.");
+      setMessageTone("error");
     } finally {
       setSaving(false);
     }
@@ -160,7 +172,7 @@ export function BillUploadForm({ members }: { members: { name: string; weight: n
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             Extract with AI
           </Button>
-          {message ? <ExtractionStatus message={message} meta={meta} /> : null}
+          {message ? <ExtractionStatus message={message} meta={meta} tone={messageTone} /> : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Utility provider" value={bill.provider} onChange={(provider) => setBill({ ...bill, provider })} />
@@ -252,18 +264,30 @@ function Field({
   );
 }
 
-function ExtractionStatus({ message, meta }: { message: string; meta: ExtractionMeta | null }) {
-  const low = meta?.needsManualReview;
+function ExtractionStatus({ message, meta, tone }: { message: string; meta: ExtractionMeta | null; tone: MessageTone }) {
+  const low = tone === "warning" || (!tone || tone === "neutral") && meta?.needsManualReview;
+  const isError = tone === "error";
+  const isSuccess = tone === "success";
+  const wrapperClass = isError
+    ? "border-red-200 bg-red-50 text-red-900 dark:bg-red-950/30 dark:text-red-100"
+    : low
+      ? "border-amber-200 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+      : "border-emerald-200 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100";
+  const badgeClass = isError
+    ? "border-red-200 bg-white/70 text-red-800"
+    : low
+      ? "border-amber-200 bg-white/70 text-amber-800"
+      : "border-emerald-200 bg-emerald-50 text-emerald-700";
 
   return (
-    <div className={`space-y-2 rounded-2xl border px-3 py-3 text-sm ${low ? "border-amber-200 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100" : "bg-muted/40 text-muted-foreground"}`}>
+    <div className={`space-y-2 rounded-2xl border px-3 py-3 text-sm ${wrapperClass}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-2">
-          {low ? <AlertTriangle className="h-4 w-4 text-amber-600" /> : <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
+          {isError || low ? <AlertTriangle className={`h-4 w-4 ${isError ? "text-red-600" : "text-amber-600"}`} /> : <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
           {message}
         </p>
         {meta ? (
-          <Badge className={low ? "border-amber-200 bg-white/70 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-700"}>
+          <Badge className={badgeClass}>
             {Math.round(meta.confidence * 100)}% confidence
           </Badge>
         ) : null}

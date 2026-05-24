@@ -17,6 +17,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { createClient } from "@/lib/supabase/server";
 import { currency, initials } from "@/lib/utils";
 
+type DashboardBill = {
+  id: string;
+  utility_provider?: string | null;
+  amount?: number | string | null;
+  due_date?: string | null;
+  billing_period?: string | null;
+  split_mode?: string | null;
+  status?: string | null;
+  proof_path?: string | null;
+};
+
 export default async function DashboardPage() {
   const supabase = await createClient();
   if (!supabase) {
@@ -53,9 +64,7 @@ export default async function DashboardPage() {
   const unpaid = (requests ?? []).reduce((sum, request) => sum + Number(request.user_share), 0);
   const openRequests = (requests ?? []).length;
 
-  const { data: bills } = householdId
-    ? await supabase.from("bills").select("id,utility_provider,amount,due_date,billing_period,split_mode,status,proof_path").eq("household_id", householdId).order("created_at", { ascending: false }).limit(25)
-    : { data: null };
+  const bills = householdId ? await getBillsWithFallback(supabase, householdId) : null;
   const upcoming = (bills ?? []).filter((bill) => bill.status !== "paid").length;
 
   const { data: paymentAccounts } = householdId
@@ -221,11 +230,11 @@ export default async function DashboardPage() {
                   <td className="py-4">{currency(Number(bill.amount))}</td>
                   <td className="py-4">{bill.due_date ?? "-"}</td>
                   <td className="py-4">{bill.billing_period ?? "-"}</td>
-                  <td className="py-4">{bill.split_mode}</td>
+                  <td className="py-4">{bill.split_mode ?? "-"}</td>
                   <td className="py-4">
                     <Badge className={bill.status === "paid" ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40" : "border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-950/40"}>
                       {bill.status === "paid" ? <CheckCircle2 className="mr-1 h-3 w-3" /> : <Clock3 className="mr-1 h-3 w-3" />}
-                      {bill.status}
+                      {bill.status ?? "scheduled"}
                     </Badge>
                   </td>
                   <td className="py-4 text-muted-foreground">{bill.proof_path ? "attached" : "-"}</td>
@@ -237,6 +246,39 @@ export default async function DashboardPage() {
       </Card>
     </div>
   );
+}
+
+async function getBillsWithFallback(
+  supabase: NonNullable<Awaited<ReturnType<typeof createClient>>>,
+  householdId: string
+): Promise<DashboardBill[] | null> {
+  const columns = ["id", "utility_provider", "amount", "due_date", "billing_period", "split_mode", "status", "proof_path"];
+
+  while (columns.length) {
+    const { data, error } = await supabase
+      .from("bills")
+      .select(columns.join(","))
+      .eq("household_id", householdId)
+      .order("created_at", { ascending: false })
+      .limit(25);
+
+    if (!error) return (data as unknown as DashboardBill[]) ?? [];
+
+    const missingColumn = getMissingBillsColumn(error);
+    if (!missingColumn) return null;
+
+    const index = columns.indexOf(missingColumn);
+    if (index === -1) return null;
+    columns.splice(index, 1);
+  }
+
+  return null;
+}
+
+function getMissingBillsColumn(error: { message?: string; code?: string }) {
+  const message = `${error.message ?? ""} ${error.code ?? ""}`;
+  const match = message.match(/Could not find the '([^']+)' column of 'bills'/);
+  return match?.[1] ?? null;
 }
 
 function Metric({

@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 export const runtime = "nodejs";
 
 const providerPriority = ["venmo", "cash_app", "paypal", "zelle"] as const;
+type InsertBillResult = { id: string };
+type InsertSplitResult = { id: string; member_id: string; amount: number | string };
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -78,27 +80,29 @@ export async function POST(request: Request) {
     parsedMeta = {};
   }
 
-  const { data: bill, error: billError } = await supabase
-    .from("bills")
-    .insert({
-      household_id: householdId,
-      uploaded_by: auth.user.id,
-      utility_provider: utilityProvider,
-      bill_type: billType,
-      amount,
-      due_date: dueDate || null,
-      billing_period: billingPeriod || null,
-      service_address: serviceAddress || null,
-      split_mode: splitMode,
-      status: "scheduled",
-      proof_path: savedProofPath,
-      ocr_confidence: parsedMeta.confidence?.overall ?? 0,
-      needs_manual_review: parsedMeta.needsManualReview ?? true,
-      ocr_payload: parsedMeta
-    })
-    .select("id")
-    .single();
-  if (billError) return NextResponse.json({ error: billError.message }, { status: 400 });
+  const billInsert = {
+    household_id: householdId,
+    uploaded_by: auth.user.id,
+    utility_provider: utilityProvider,
+    bill_type: billType,
+    amount,
+    due_date: dueDate || null,
+    billing_period: billingPeriod || null,
+    service_address: serviceAddress || null,
+    split_mode: splitMode,
+    status: "scheduled",
+    proof_path: savedProofPath,
+    ocr_confidence: parsedMeta.confidence?.overall ?? 0,
+    needs_manual_review: parsedMeta.needsManualReview ?? true,
+    ocr_payload: parsedMeta
+  };
+
+  const billResult = await insertWithSchemaFallback(supabase, "bills", billInsert, ["id"]);
+  if (billResult.error) return NextResponse.json({ error: billResult.error.message }, { status: 400 });
+  const bill = billResult.data as unknown as InsertBillResult;
+  if (billResult.removedColumns.length) {
+    warnings.push(`Bills table missing columns: ${billResult.removedColumns.join(", ")}. Saved with reduced schema.`);
+  }
 
   const totalWeight =
     splitMode === "equal" ? members.length : members.reduce((sum, member) => sum + Number(member.split_weight || 1), 0);
@@ -118,8 +122,12 @@ export async function POST(request: Request) {
     };
   });
 
-  const { data: splits, error: splitsError } = await supabase.from("bill_splits").insert(splitRows).select("id,member_id,amount");
-  if (splitsError) return NextResponse.json({ error: splitsError.message }, { status: 400 });
+  const splitsResult = await insertManyWithSchemaFallback(supabase, "bill_splits", splitRows, ["id", "member_id", "amount"]);
+  if (splitsResult.error) return NextResponse.json({ error: splitsResult.error.message }, { status: 400 });
+  const splits = (splitsResult.data as unknown as InsertSplitResult[] | null) ?? [];
+  if (splitsResult.removedColumns.length) {
+    warnings.push(`Bill splits table missing columns: ${splitsResult.removedColumns.join(", ")}. Saved with reduced schema.`);
+  }
 
   let accounts:
     | {
@@ -236,4 +244,65 @@ function isMissingSchemaTable(error: { message?: string; code?: string }, table:
 function isMissingBucket(error: { message?: string; code?: string }) {
   const message = `${error.message ?? ""} ${error.code ?? ""}`.toLowerCase();
   return message.includes("bucket not found") || message.includes("bucket") && message.includes("not found");
+}
+
+function getMissingColumn(error: { message?: string; code?: string }, relation: string) {
+  const message = `${error.message ?? ""} ${error.code ?? ""}`;
+  const match = message.match(new RegExp(`Could not find the '([^']+)' column of '${relation}'`));
+  return match?.[1] ?? null;
+}
+
+async function insertWithSchemaFallback(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  relation: string,
+  payload: Record<string, unknown>,
+  selectColumns: string[]
+) {
+  if (!supabase) return { data: null, error: new Error("Supabase env missing"), removedColumns: [] as string[] };
+
+  const workingPayload = { ...payload };
+  const removedColumns: string[] = [];
+
+  while (true) {
+    const result = await supabase.from(relation).insert(workingPayload).select(selectColumns.join(",")).single();
+    if (!result.error) return { data: result.data, error: null, removedColumns };
+
+    const missingColumn = getMissingColumn(result.error, relation);
+    if (!missingColumn || !(missingColumn in workingPayload)) {
+      return { data: null, error: result.error, removedColumns };
+    }
+
+    delete workingPayload[missingColumn];
+    removedColumns.push(missingColumn);
+  }
+}
+
+async function insertManyWithSchemaFallback(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  relation: string,
+  rows: Record<string, unknown>[],
+  selectColumns: string[]
+) {
+  if (!supabase) return { data: null, error: new Error("Supabase env missing"), removedColumns: [] as string[] };
+
+  let workingRows = rows.map((row) => ({ ...row }));
+  const removedColumns: string[] = [];
+
+  while (true) {
+    const result = await supabase.from(relation).insert(workingRows).select(selectColumns.join(","));
+    if (!result.error) return { data: result.data, error: null, removedColumns };
+
+    const missingColumn = getMissingColumn(result.error, relation);
+    if (!missingColumn) return { data: null, error: result.error, removedColumns };
+
+    const anyRowHasColumn = workingRows.some((row) => missingColumn in row);
+    if (!anyRowHasColumn) return { data: null, error: result.error, removedColumns };
+
+    workingRows = workingRows.map((row) => {
+      const next = { ...row };
+      delete next[missingColumn];
+      return next;
+    });
+    removedColumns.push(missingColumn);
+  }
 }
