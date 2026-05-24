@@ -49,13 +49,22 @@ export async function POST(request: Request) {
   if (membersError) return NextResponse.json({ error: membersError.message }, { status: 400 });
   if (!members?.length) return NextResponse.json({ error: "Add household members first" }, { status: 400 });
 
+  const warnings: string[] = [];
   const proofPath = `${householdId}/${randomUUID()}-${sanitizeFilename(file.name)}`;
+  let savedProofPath: string | null = proofPath;
   const { error: uploadError } = await supabase.storage.from("bill-proofs").upload(proofPath, file, {
     cacheControl: "3600",
     upsert: false,
     contentType: file.type || "application/octet-stream"
   });
-  if (uploadError) return NextResponse.json({ error: uploadError.message }, { status: 400 });
+  if (uploadError) {
+    if (isMissingBucket(uploadError)) {
+      savedProofPath = null;
+      warnings.push("Bill proof bucket missing. Bill saved without file attachment.");
+    } else {
+      return NextResponse.json({ error: uploadError.message }, { status: 400 });
+    }
+  }
 
   let parsedMeta: {
     confidence?: { overall?: number };
@@ -82,7 +91,7 @@ export async function POST(request: Request) {
       service_address: serviceAddress || null,
       split_mode: splitMode,
       status: "scheduled",
-      proof_path: proofPath,
+      proof_path: savedProofPath,
       ocr_confidence: parsedMeta.confidence?.overall ?? 0,
       needs_manual_review: parsedMeta.needsManualReview ?? true,
       ocr_payload: parsedMeta
@@ -112,7 +121,6 @@ export async function POST(request: Request) {
   const { data: splits, error: splitsError } = await supabase.from("bill_splits").insert(splitRows).select("id,member_id,amount");
   if (splitsError) return NextResponse.json({ error: splitsError.message }, { status: 400 });
 
-  const warnings: string[] = [];
   let accounts:
     | {
         provider: (typeof providerPriority)[number];
@@ -154,7 +162,7 @@ export async function POST(request: Request) {
       total_bill: amount,
       user_share: Number(split.amount),
       due_date: dueDate || null,
-      proof_path: proofPath,
+      proof_path: savedProofPath,
       provider: defaultAccount.provider,
       payment_target: defaultAccount.handle,
       payment_url: null,
@@ -197,7 +205,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     ok: true,
     billId: bill.id,
-    proofPath,
+    proofPath: savedProofPath,
     createdRequests,
     warnings,
     message: createdRequests
@@ -223,4 +231,9 @@ function shiftDueDate(isoDate: string, offsetDays: number) {
 function isMissingSchemaTable(error: { message?: string; code?: string }, table: string) {
   const message = `${error.message ?? ""} ${error.code ?? ""}`;
   return message.includes("schema cache") && message.includes(table);
+}
+
+function isMissingBucket(error: { message?: string; code?: string }) {
+  const message = `${error.message ?? ""} ${error.code ?? ""}`.toLowerCase();
+  return message.includes("bucket not found") || message.includes("bucket") && message.includes("not found");
 }
