@@ -11,7 +11,7 @@ import { addMember, createHousehold, removeMember, renameHousehold, updateMember
 export default async function HouseholdsPage({
   searchParams
 }: {
-  searchParams: Promise<{ householdId?: string }>;
+  searchParams: Promise<{ householdId?: string; error?: string }>;
 }) {
   const supabase = await createClient();
   if (!supabase) {
@@ -30,7 +30,10 @@ export default async function HouseholdsPage({
   if (!user) return null;
 
   const params = await searchParams;
-  const { data: households } = await supabase.from("households").select("id,name,owner_id,invite_code").order("created_at", { ascending: true });
+  const { data: households } = await supabase
+    .from("households")
+    .select("id,name,owner_id,invite_code")
+    .order("created_at", { ascending: true });
   const active = households?.find((h) => h.id === params.householdId) ?? households?.[0] ?? null;
 
   const { data: members } = active
@@ -52,6 +55,11 @@ export default async function HouseholdsPage({
           <p className="text-sm text-muted-foreground">Start by naming your home. You can invite roommates after.</p>
         </CardHeader>
         <CardContent className="space-y-3">
+          {params.error ? (
+            <p className="rounded-2xl border bg-amber-50 p-4 text-sm text-amber-900">
+              {decodeURIComponent(params.error)}
+            </p>
+          ) : null}
           <form action={createHousehold} className="grid gap-3 sm:grid-cols-[1fr_auto]">
             <Input name="name" placeholder="e.g. 1420 Elm Street" required minLength={2} />
             <Button variant="dark" type="submit">Create</Button>
@@ -75,6 +83,11 @@ export default async function HouseholdsPage({
           <p className="text-sm text-muted-foreground">Edit name, members, and split weights.</p>
         </CardHeader>
         <CardContent className="space-y-5">
+          {params.error ? (
+            <p className="rounded-2xl border bg-amber-50 p-4 text-sm text-amber-900">
+              {decodeURIComponent(params.error)}
+            </p>
+          ) : null}
           <form action={renameHousehold} className="grid gap-3 rounded-2xl border bg-background/70 p-4 sm:grid-cols-[1fr_auto] sm:items-end">
             <input type="hidden" name="householdId" value={active.id} />
             <div className="space-y-2">
