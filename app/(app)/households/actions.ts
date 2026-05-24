@@ -37,6 +37,13 @@ export async function createHousehold(formData: FormData) {
     redirect(`/households?householdId=${household.id}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to create household";
+    if (message.includes("PGRST204") && message.includes("owner_id")) {
+      redirect(
+        `/households?error=${encodeURIComponent(
+          "Supabase schema missing households.owner_id. Run supabase/migrations/2026-05-24_add_households_owner_id.sql in Supabase SQL editor, then retry."
+        )}`
+      );
+    }
     redirect(`/households?error=${encodeURIComponent(message)}`);
   }
 }

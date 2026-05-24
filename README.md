@@ -37,6 +37,10 @@ Run `supabase/schema.sql` in Supabase SQL editor. It creates:
 
 Without env values, app shows demo data so UI can be reviewed immediately.
 
+## Supabase Migrations
+
+If you created tables before latest schema, run migrations in `supabase/migrations/` in Supabase SQL editor.
+
 ## Bill Extraction
 
 `POST /api/ocr` accepts PDF/image uploads and returns editable bill fields:
