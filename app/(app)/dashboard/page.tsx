@@ -83,12 +83,12 @@ export default async function DashboardPage() {
             Utilities, split clean.
           </h1>
           <p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
-            Upload bills, extract totals, split fairly, and send roommates clear payment links.
+            Upload bills, extract totals, and keep household utility history in one place.
           </p>
           <div className="mt-5 flex flex-wrap gap-2 text-xs text-muted-foreground">
             <span className="rounded-full border bg-background/70 px-3 py-1">OCR proof</span>
             <span className="rounded-full border bg-background/70 px-3 py-1">Weighted splits</span>
-            <span className="rounded-full border bg-background/70 px-3 py-1">Auto reminders</span>
+            <span className="rounded-full border bg-background/70 px-3 py-1">Bill history</span>
           </div>
         </div>
         <Button asChild size="lg" variant="dark">

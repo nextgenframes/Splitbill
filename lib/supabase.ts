@@ -1,4 +1,5 @@
 import { createBrowserClient, createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 import type { CookieOptions } from "@supabase/ssr";
 import type { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
 
@@ -10,8 +11,16 @@ export function getSupabaseAnonKey() {
   return process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 }
 
+export function getSupabaseServiceRoleKey() {
+  return process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+}
+
 export function hasSupabaseEnv() {
   return Boolean(getSupabaseUrl()) && Boolean(getSupabaseAnonKey());
+}
+
+export function hasSupabaseServiceRoleEnv() {
+  return Boolean(getSupabaseUrl()) && Boolean(getSupabaseServiceRoleKey());
 }
 
 export function createSupabaseBrowserClient() {
@@ -38,6 +47,21 @@ export function createSupabaseServerClient(cookieStore: ReadonlyRequestCookies) 
       setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
         cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
       }
+    }
+  });
+}
+
+export function createSupabaseAdminClient() {
+  const url = getSupabaseUrl();
+  const key = getSupabaseServiceRoleKey();
+  if (!url || !key) return null;
+  assertLooksLikeSupabaseUrl(url);
+  assertHttpsInProduction(url);
+
+  return createClient(url, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false
     }
   });
 }

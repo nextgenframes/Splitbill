@@ -131,7 +131,7 @@ export function BillUploadForm({ members }: { members: { name: string; weight: n
       const warningMessage = Array.isArray(result.warnings) && result.warnings.length ? ` ${result.warnings.join(" ")}` : "";
       setMessage(`${result.message ?? "Bill saved."}${warningMessage}`);
       setMessageTone(Array.isArray(result.warnings) && result.warnings.length ? "warning" : "success");
-      router.push(result.createdRequests ? "/payments" : "/dashboard");
+      router.push("/dashboard");
       router.refresh();
     } catch {
       setMessage("Bill save failed.");
@@ -203,7 +203,7 @@ export function BillUploadForm({ members }: { members: { name: string; weight: n
 
           <Button className="w-full" size="lg" onClick={saveBill} disabled={!file || saving || loading}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            {saving ? "Saving bill..." : meta?.needsManualReview ? "Confirm and save bill" : "Save bill and send requests"}
+            {saving ? "Saving bill..." : meta?.needsManualReview ? "Confirm and save bill" : "Save bill"}
           </Button>
         </CardContent>
       </Card>
@@ -211,7 +211,7 @@ export function BillUploadForm({ members }: { members: { name: string; weight: n
       <Card className="lg:sticky lg:top-24 lg:self-start">
         <CardHeader>
           <CardTitle>Split preview</CardTitle>
-          <p className="text-sm text-muted-foreground">Payment links attach after save.</p>
+          <p className="text-sm text-muted-foreground">Review extracted bill before saving.</p>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="rounded-3xl bg-slate-950 p-5 text-white shadow-soft dark:bg-white dark:text-slate-950">
