@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { getActiveHousehold } from "@/lib/active-household";
 import { createClient } from "@/lib/supabase/server";
 import { initials } from "@/lib/utils";
 import { addMember, createHousehold, removeMember, renameHousehold, repairOwnerMembership, updateMember } from "./actions";
@@ -33,8 +34,9 @@ export default async function HouseholdsPage({
   const { data: households } = await supabase
     .from("households")
     .select("id,name,owner_id,invite_code")
-    .order("created_at", { ascending: true });
-  const active = households?.find((h) => h.id === params.householdId) ?? households?.[0] ?? null;
+    .order("created_at", { ascending: false });
+  const defaultActive = await getActiveHousehold(supabase as never, user.id);
+  const active = households?.find((h) => h.id === params.householdId) ?? defaultActive ?? households?.[0] ?? null;
 
   const { data: members } = active
     ? await supabase

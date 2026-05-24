@@ -1,4 +1,5 @@
 import { BillUploadForm } from "@/components/bill-upload-form";
+import { getActiveHousehold } from "@/lib/active-household";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function NewBillPage() {
@@ -9,8 +10,8 @@ export default async function NewBillPage() {
   // Fallback to empty; UI will still allow manual entry.
   let members: { name: string; weight: number }[] = [];
   if (supabase && user) {
-    const { data: households } = await supabase.from("households").select("id").order("created_at", { ascending: true }).limit(1);
-    const householdId = households?.[0]?.id;
+    const household = await getActiveHousehold(supabase as never, user.id);
+    const householdId = household?.id;
     if (householdId) {
       const { data } = await supabase
         .from("household_members")

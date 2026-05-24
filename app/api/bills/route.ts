@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import { getActiveHousehold } from "@/lib/active-household";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -33,14 +34,7 @@ export async function POST(request: Request) {
   }
   if (!Number.isFinite(amount) || amount <= 0) return NextResponse.json({ error: "Bill amount must be greater than 0" }, { status: 400 });
 
-  const { data: households, error: householdError } = await supabase
-    .from("households")
-    .select("id,owner_id")
-    .order("created_at", { ascending: true })
-    .limit(1);
-  if (householdError) return NextResponse.json({ error: householdError.message }, { status: 400 });
-
-  const household = households?.[0] ?? null;
+  const household = await getActiveHousehold(supabase as never, auth.user.id);
   const householdId = household?.id;
   if (!householdId) return NextResponse.json({ error: "Create household first" }, { status: 400 });
 

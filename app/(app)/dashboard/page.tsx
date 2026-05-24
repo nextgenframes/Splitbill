@@ -14,6 +14,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getActiveHousehold } from "@/lib/active-household";
 import { createClient } from "@/lib/supabase/server";
 import { currency, initials } from "@/lib/utils";
 
@@ -45,8 +46,7 @@ export default async function DashboardPage() {
   const user = auth.user;
   if (!user) return null;
 
-  const { data: households } = await supabase.from("households").select("id,name").order("created_at", { ascending: true }).limit(1);
-  const household = households?.[0] ?? null;
+  const household = await getActiveHousehold(supabase as never, user.id);
 
   const householdId = household?.id;
   const { data: members } = householdId

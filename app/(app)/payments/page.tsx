@@ -13,6 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getActiveHousehold } from "@/lib/active-household";
 import { buildPaymentLink, getRequestStatus, type PaymentRequestStatus } from "@/lib/payment-requests";
 import { createClient } from "@/lib/supabase/server";
 import { currency } from "@/lib/utils";
@@ -39,8 +40,8 @@ export default async function PaymentsPage() {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return null;
 
-  const { data: households } = await supabase.from("households").select("id").order("created_at", { ascending: true }).limit(1);
-  const householdId = households?.[0]?.id;
+  const household = await getActiveHousehold(supabase as never, auth.user.id);
+  const householdId = household?.id;
 
   const { data: requests } = householdId
     ? await supabase
