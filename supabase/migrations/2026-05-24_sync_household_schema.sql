@@ -39,6 +39,25 @@ add column if not exists split_weight numeric(8, 2) not null default 1,
 add column if not exists joined_at timestamptz,
 add column if not exists created_at timestamptz not null default now();
 
+delete from public.household_members a
+using public.household_members b
+where a.ctid < b.ctid
+  and a.household_id = b.household_id
+  and a.email = b.email;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'household_members_household_id_email_key'
+      and conrelid = 'public.household_members'::regclass
+  ) then
+    alter table public.household_members
+    add constraint household_members_household_id_email_key unique (household_id, email);
+  end if;
+end $$;
+
 do $$
 begin
   if not exists (

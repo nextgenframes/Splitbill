@@ -7,6 +7,40 @@ import { createClient } from "@/lib/supabase/server";
 
 const idSchema = z.string().uuid();
 
+async function saveOwnerMember(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  owner: {
+    id: string;
+    email?: string | null;
+    user_metadata?: { full_name?: string };
+  },
+  householdId: string
+) {
+  if (!supabase) throw new Error("Supabase env missing");
+
+  const ownerMember = {
+    household_id: householdId,
+    user_id: owner.id,
+    email: owner.email ?? "unknown",
+    display_name: owner.user_metadata?.full_name ?? owner.email ?? "Owner",
+    role: "owner",
+    split_weight: 1,
+    joined_at: new Date().toISOString()
+  };
+
+  const { error: insertError } = await supabase.from("household_members").insert(ownerMember);
+  if (!insertError) return;
+
+  if (insertError.code !== "23505") throw insertError;
+
+  const { error: updateError } = await supabase
+    .from("household_members")
+    .update(ownerMember)
+    .eq("household_id", householdId)
+    .eq("email", ownerMember.email);
+  if (updateError) throw updateError;
+}
+
 function formatHouseholdError(err: unknown, fallback: string) {
   let errorMessage = fallback;
   if (err instanceof Error) {
@@ -25,6 +59,10 @@ function formatHouseholdError(err: unknown, fallback: string) {
   if (errorMessage.includes("PGRST204") && errorMessage.includes("household_members")) {
     errorMessage =
       "Supabase household_members table is missing app columns. Run supabase/migrations/2026-05-24_sync_household_schema.sql in Supabase SQL editor, then retry.";
+  }
+  if (errorMessage.includes("ON CONFLICT") || errorMessage.includes("42P10")) {
+    errorMessage =
+      "Supabase household_members table is missing its unique constraint. Run supabase/migrations/2026-05-24_sync_household_schema.sql in Supabase SQL editor, then retry.";
   }
   if (errorMessage.includes("row-level security") && errorMessage.includes("household_members")) {
     errorMessage =
@@ -54,21 +92,7 @@ export async function createHousehold(formData: FormData) {
       .single();
     if (error) throw error;
 
-    const { error: memberError } = await supabase
-      .from("household_members")
-      .upsert(
-        {
-          household_id: household.id,
-          user_id: auth.user.id,
-          email: auth.user.email ?? "unknown",
-          display_name: auth.user.user_metadata?.full_name ?? auth.user.email ?? "Owner",
-          role: "owner",
-          split_weight: 1,
-          joined_at: new Date().toISOString()
-        },
-        { onConflict: "household_id,email" }
-      );
-    if (memberError) throw memberError;
+    await saveOwnerMember(supabase, auth.user, household.id);
 
     householdId = household.id;
   } catch (err) {
@@ -105,21 +129,7 @@ export async function repairOwnerMembership(formData: FormData) {
     if (householdError) throw householdError;
     if (household.owner_id !== auth.user.id) throw new Error("Only the household owner can repair owner access.");
 
-    const { error: memberError } = await supabase
-      .from("household_members")
-      .upsert(
-        {
-          household_id: householdId,
-          user_id: auth.user.id,
-          email: auth.user.email ?? "unknown",
-          display_name: auth.user.user_metadata?.full_name ?? auth.user.email ?? "Owner",
-          role: "owner",
-          split_weight: 1,
-          joined_at: new Date().toISOString()
-        },
-        { onConflict: "household_id,email" }
-      );
-    if (memberError) throw memberError;
+    await saveOwnerMember(supabase, auth.user, householdId);
   } catch (err) {
     errorMessage = formatHouseholdError(err, "Failed to repair owner access");
   }
