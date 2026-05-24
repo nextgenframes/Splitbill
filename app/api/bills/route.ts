@@ -115,6 +115,7 @@ export async function POST(request: Request) {
   const billInsert = {
     household_id: householdId,
     uploaded_by: auth.user.id,
+    provider: utilityProvider,
     utility_provider: utilityProvider,
     bill_type: billType,
     amount,

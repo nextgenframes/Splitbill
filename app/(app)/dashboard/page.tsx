@@ -20,6 +20,7 @@ import { currency, initials } from "@/lib/utils";
 
 type DashboardBill = {
   id: string;
+  provider?: string | null;
   utility_provider?: string | null;
   amount?: number | string | null;
   due_date?: string | null;
@@ -226,7 +227,7 @@ export default async function DashboardPage() {
             <tbody>
               {(bills ?? []).map((bill) => (
                 <tr key={bill.id} className="border-b transition hover:bg-muted/35 last:border-0">
-                  <td className="py-4 font-medium">{bill.utility_provider}</td>
+                  <td className="py-4 font-medium">{bill.utility_provider ?? bill.provider ?? "-"}</td>
                   <td className="py-4">{currency(Number(bill.amount))}</td>
                   <td className="py-4">{bill.due_date ?? "-"}</td>
                   <td className="py-4">{bill.billing_period ?? "-"}</td>
@@ -252,7 +253,7 @@ async function getBillsWithFallback(
   supabase: NonNullable<Awaited<ReturnType<typeof createClient>>>,
   householdId: string
 ): Promise<DashboardBill[] | null> {
-  const columns = ["id", "utility_provider", "amount", "due_date", "billing_period", "split_mode", "status", "proof_path"];
+  const columns = ["id", "provider", "utility_provider", "amount", "due_date", "billing_period", "split_mode", "status", "proof_path"];
 
   while (columns.length) {
     const { data, error } = await supabase
