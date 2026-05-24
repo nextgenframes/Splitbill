@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getActiveHousehold } from "@/lib/active-household";
-import { createSupabaseAdminClient } from "@/lib/supabase";
+import { createSupabaseAdminClient, getSupabaseServiceRoleStatus } from "@/lib/supabase";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -12,6 +12,7 @@ type InsertBillResult = { id: string };
 export async function POST(request: Request) {
   const supabase = await createClient();
   if (!supabase) return NextResponse.json({ error: "Supabase env missing" }, { status: 500 });
+  const serviceRole = getSupabaseServiceRoleStatus();
   const writeClient = createSupabaseAdminClient() ?? supabase;
 
   const { data: auth } = await supabase.auth.getUser();
@@ -131,10 +132,14 @@ export async function POST(request: Request) {
   const billResult = await insertWithSchemaFallback(writeClient, "bills", billInsert, ["id"]);
   if (billResult.error) {
     if (isBillsRlsError(billResult.error)) {
+      const envHint = !serviceRole.present
+        ? "SUPABASE_SERVICE_ROLE_KEY is not available at runtime. Add it to Vercel and redeploy."
+        : !serviceRole.isPrivileged
+          ? `SUPABASE_SERVICE_ROLE_KEY is loaded but not privileged (kind=${serviceRole.keyKind}${serviceRole.jwtRole ? `, role=${serviceRole.jwtRole}` : ""}). Use actual service role or secret key.`
+          : "Privileged key is loaded. Remaining blocker is live Supabase schema/policies.";
       return NextResponse.json(
         {
-          error:
-            "Supabase blocked bill save. Add SUPABASE_SERVICE_ROLE_KEY on server, or run household/billing SQL sync and retry."
+          error: `Supabase blocked bill save. ${envHint}`
         },
         { status: 400 }
       );

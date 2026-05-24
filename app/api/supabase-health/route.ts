@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseUrl, hasSupabaseEnv } from "@/lib/supabase";
+import { getSupabaseServiceRoleStatus, getSupabaseUrl, hasSupabaseEnv, hasSupabaseServiceRoleEnv } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
@@ -13,6 +13,7 @@ export async function GET() {
 
   const url = getSupabaseUrl();
   const healthUrl = `${url.replace(/\/+$/, "")}/auth/v1/health`;
+  const serviceRole = getSupabaseServiceRoleStatus();
 
   try {
     const controller = new AbortController();
@@ -25,6 +26,10 @@ export async function GET() {
       ok: resp.ok,
       status: resp.status,
       healthUrl,
+      serviceRolePresent: hasSupabaseServiceRoleEnv(),
+      serviceRoleKind: serviceRole.keyKind,
+      serviceRoleJwtRole: serviceRole.jwtRole,
+      serviceRolePrivileged: serviceRole.isPrivileged,
       hint:
         resp.ok
           ? "Supabase reachable from server."

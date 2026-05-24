@@ -23,6 +23,20 @@ export function hasSupabaseServiceRoleEnv() {
   return Boolean(getSupabaseUrl()) && Boolean(getSupabaseServiceRoleKey());
 }
 
+export function getSupabaseServiceRoleStatus() {
+  const key = getSupabaseServiceRoleKey();
+  const keyKind = getSupabaseKeyKind(key);
+  const jwtRole = keyKind === "jwt" ? getJwtRoleClaim(key) : null;
+  const isPrivileged = keyKind === "sb_secret" || (keyKind === "jwt" && jwtRole === "service_role");
+
+  return {
+    present: Boolean(key),
+    keyKind,
+    jwtRole,
+    isPrivileged
+  };
+}
+
 export function createSupabaseBrowserClient() {
   const url = getSupabaseUrl();
   const key = getSupabaseAnonKey();
@@ -55,6 +69,7 @@ export function createSupabaseAdminClient() {
   const url = getSupabaseUrl();
   const key = getSupabaseServiceRoleKey();
   if (!url || !key) return null;
+  if (!getSupabaseServiceRoleStatus().isPrivileged) return null;
   assertLooksLikeSupabaseUrl(url);
   assertHttpsInProduction(url);
 
@@ -64,6 +79,27 @@ export function createSupabaseAdminClient() {
       autoRefreshToken: false
     }
   });
+}
+
+function getSupabaseKeyKind(key: string) {
+  if (!key) return "missing";
+  if (key.startsWith("sb_secret_")) return "sb_secret";
+  if (key.startsWith("sb_publishable_")) return "sb_publishable";
+  if (key.startsWith("eyJ")) return "jwt";
+  return "unknown";
+}
+
+function getJwtRoleClaim(token: string) {
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const json = Buffer.from(normalized, "base64").toString("utf8");
+    const parsed = JSON.parse(json);
+    return typeof parsed.role === "string" ? parsed.role : null;
+  } catch {
+    return null;
+  }
 }
 
 function assertLooksLikeSupabaseUrl(url: string) {
