@@ -8,7 +8,16 @@ import { createClient } from "@/lib/supabase/server";
 const idSchema = z.string().uuid();
 
 function formatHouseholdError(err: unknown, fallback: string) {
-  let errorMessage = err instanceof Error ? err.message : fallback;
+  let errorMessage = fallback;
+  if (err instanceof Error) {
+    errorMessage = err.message;
+  } else if (err && typeof err === "object") {
+    const supabaseError = err as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown };
+    const parts = [supabaseError.message, supabaseError.details, supabaseError.hint, supabaseError.code]
+      .filter((part): part is string => typeof part === "string" && part.trim().length > 0);
+    errorMessage = parts.length ? parts.join(" ") : fallback;
+  }
+
   if (errorMessage.includes("PGRST204") && errorMessage.includes("owner_id")) {
     errorMessage =
       "Supabase schema missing households.owner_id. Run supabase/migrations/2026-05-24_add_households_owner_id.sql in Supabase SQL editor, then retry.";
