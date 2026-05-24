@@ -49,14 +49,6 @@ export async function POST(request: Request) {
   if (membersError) return NextResponse.json({ error: membersError.message }, { status: 400 });
   if (!members?.length) return NextResponse.json({ error: "Add household members first" }, { status: 400 });
 
-  const { data: accounts, error: accountsError } = await supabase
-    .from("payment_accounts")
-    .select("provider,handle,is_enabled")
-    .eq("household_id", householdId)
-    .eq("is_enabled", true)
-    .order("created_at", { ascending: true });
-  if (accountsError) return NextResponse.json({ error: accountsError.message }, { status: 400 });
-
   const proofPath = `${householdId}/${randomUUID()}-${sanitizeFilename(file.name)}`;
   const { error: uploadError } = await supabase.storage.from("bill-proofs").upload(proofPath, file, {
     cacheControl: "3600",
@@ -120,6 +112,33 @@ export async function POST(request: Request) {
   const { data: splits, error: splitsError } = await supabase.from("bill_splits").insert(splitRows).select("id,member_id,amount");
   if (splitsError) return NextResponse.json({ error: splitsError.message }, { status: 400 });
 
+  const warnings: string[] = [];
+  let accounts:
+    | {
+        provider: (typeof providerPriority)[number];
+        handle: string;
+        is_enabled: boolean;
+      }[]
+    | null = null;
+
+  const { data: paymentAccounts, error: accountsError } = await supabase
+    .from("payment_accounts")
+    .select("provider,handle,is_enabled")
+    .eq("household_id", householdId)
+    .eq("is_enabled", true)
+    .order("created_at", { ascending: true });
+
+  if (accountsError) {
+    if (isMissingSchemaTable(accountsError, "payment_accounts")) {
+      warnings.push("Payment accounts table missing. Bill saved without payment requests.");
+      accounts = [];
+    } else {
+      return NextResponse.json({ error: accountsError.message }, { status: 400 });
+    }
+  } else {
+    accounts = paymentAccounts;
+  }
+
   const defaultAccount =
     providerPriority
       .map((provider) => accounts?.find((account) => account.provider === provider))
@@ -148,7 +167,13 @@ export async function POST(request: Request) {
       .from("payment_requests")
       .insert(requestRows)
       .select("id,member_id");
-    if (requestError) return NextResponse.json({ error: requestError.message }, { status: 400 });
+    if (requestError) {
+      if (isMissingSchemaTable(requestError, "payment_requests")) {
+        warnings.push("Payment requests table missing. Bill saved without roommate payment requests.");
+      } else {
+        return NextResponse.json({ error: requestError.message }, { status: 400 });
+      }
+    }
 
     createdRequests = requests?.length ?? 0;
 
@@ -162,7 +187,10 @@ export async function POST(request: Request) {
         }))
       );
       const { error: reminderError } = await supabase.from("reminder_events").insert(reminderRows);
-      if (reminderError) return NextResponse.json({ error: reminderError.message }, { status: 400 });
+      if (reminderError && !isMissingSchemaTable(reminderError, "reminder_events")) {
+        return NextResponse.json({ error: reminderError.message }, { status: 400 });
+      }
+      if (reminderError) warnings.push("Reminder events table missing. Bill saved without reminders.");
     }
   }
 
@@ -171,6 +199,7 @@ export async function POST(request: Request) {
     billId: bill.id,
     proofPath,
     createdRequests,
+    warnings,
     message: createdRequests
       ? "Bill saved and payment requests created."
       : "Bill saved. Add payment accounts to create payment requests."
@@ -189,4 +218,9 @@ function shiftDueDate(isoDate: string, offsetDays: number) {
   const base = new Date(`${isoDate}T09:00:00.000Z`);
   base.setUTCDate(base.getUTCDate() + offsetDays);
   return base.toISOString();
+}
+
+function isMissingSchemaTable(error: { message?: string; code?: string }, table: string) {
+  const message = `${error.message ?? ""} ${error.code ?? ""}`;
+  return message.includes("schema cache") && message.includes(table);
 }
