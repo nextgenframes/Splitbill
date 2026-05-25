@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   const utilityProvider = String(form.get("provider") ?? "").trim();
   const billType = String(form.get("billType") ?? "").trim();
   const amount = Number(form.get("amount") ?? 0);
-  const dueDate = String(form.get("dueDate") ?? "").trim();
+  const dueDate = normalizeDateInput(String(form.get("dueDate") ?? "").trim());
   const billingPeriod = String(form.get("billingPeriod") ?? "").trim();
   const serviceAddress = String(form.get("serviceAddress") ?? "").trim();
   const splitMode = form.get("splitMode") === "weighted" ? "weighted" : "equal";
@@ -171,6 +171,21 @@ function sanitizeFilename(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "-");
 }
 
+function normalizeDateInput(value: string) {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+
+  const slash = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) {
+    const [, month, day, year] = slash;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  const time = Date.parse(value);
+  if (!Number.isNaN(time)) return new Date(time).toISOString().slice(0, 10);
+  return "";
+}
+
 function isMissingSchemaTable(error: { message?: string; code?: string }, table: string) {
   const message = `${error.message ?? ""} ${error.code ?? ""}`;
   return message.includes("schema cache") && message.includes(table);
@@ -211,6 +226,9 @@ function getLegacyBillsValue(column: string, payload: Record<string, unknown>) {
     utility_provider: utilityProvider,
     category: billType,
     type: billType,
+    name: utilityProvider,
+    title: utilityProvider,
+    label: utilityProvider,
     bill_type: billType,
     total: amount,
     amount,
@@ -219,10 +237,22 @@ function getLegacyBillsValue(column: string, payload: Record<string, unknown>) {
     period: billingPeriod,
     billing_period: billingPeriod,
     address: serviceAddress,
-    service_address: serviceAddress
+    service_address: serviceAddress,
+    description: [utilityProvider, billingPeriod].filter(Boolean).join(" ").trim() || utilityProvider,
+    note: [utilityProvider, billingPeriod].filter(Boolean).join(" ").trim() || utilityProvider
   };
 
   return fallbacks[column];
+}
+
+function isInvalidDateColumn(error: { message?: string; code?: string }, relation: string) {
+  const message = `${error.message ?? ""} ${error.code ?? ""}`.toLowerCase();
+  return relation === "bills" && message.includes("invalid input syntax for type date");
+}
+
+function isInvalidEnumValue(error: { message?: string; code?: string }, column: string) {
+  const message = `${error.message ?? ""} ${error.code ?? ""}`.toLowerCase();
+  return message.includes(`"${column}"`) && message.includes("invalid input value for enum");
 }
 
 async function insertWithSchemaFallback(
@@ -247,6 +277,24 @@ async function insertWithSchemaFallback(
         workingPayload[nullConstraintColumn] = nextValue;
         continue;
       }
+    }
+
+    if (isInvalidDateColumn(result.error, relation)) {
+      if ("due_date" in workingPayload) workingPayload.due_date = null;
+      if ("due" in workingPayload) workingPayload.due = null;
+      continue;
+    }
+
+    if (relation === "bills" && isInvalidEnumValue(result.error, "bill_type")) {
+      if ("bill_type" in workingPayload) workingPayload.bill_type = "electric";
+      if ("category" in workingPayload) workingPayload.category = "electric";
+      if ("type" in workingPayload) workingPayload.type = "electric";
+      continue;
+    }
+
+    if (relation === "bills" && isInvalidEnumValue(result.error, "split_mode")) {
+      if ("split_mode" in workingPayload) workingPayload.split_mode = "equal";
+      continue;
     }
 
     const missingColumn = getMissingColumn(result.error, relation);
