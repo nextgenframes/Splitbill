@@ -245,6 +245,30 @@ function getLegacyBillsValue(column: string, payload: Record<string, unknown>) {
   return fallbacks[column];
 }
 
+function getGenericBillsFallbackValue(column: string, payload: Record<string, unknown>) {
+  const normalized = column.toLowerCase();
+  const utilityProvider = String(payload.utility_provider ?? payload.provider ?? "Utility bill").trim() || "Utility bill";
+  const billType = String(payload.bill_type ?? payload.category ?? payload.type ?? "electric").trim() || "electric";
+  const amount = Number(payload.amount ?? payload.total ?? 0);
+  const dueDate = (payload.due_date ?? payload.due ?? null) as string | null;
+  const billingPeriod = String(payload.billing_period ?? payload.period ?? "").trim();
+  const serviceAddress = String(payload.service_address ?? payload.address ?? "").trim();
+
+  if (normalized.includes("provider") || normalized.includes("vendor") || normalized.includes("merchant")) return utilityProvider;
+  if (normalized.includes("category") || normalized.includes("type") || normalized.includes("kind")) return billType;
+  if (normalized.includes("amount") || normalized.includes("total") || normalized.includes("balance")) return amount;
+  if (normalized.includes("due")) return dueDate;
+  if (normalized.includes("period") || normalized.includes("cycle")) return billingPeriod || "Current period";
+  if (normalized.includes("address") || normalized.includes("service")) return serviceAddress || "Address pending";
+  if (normalized.includes("name") || normalized.includes("title") || normalized.includes("label")) return utilityProvider;
+  if (normalized.includes("status")) return "scheduled";
+  if (normalized.includes("mode")) return "equal";
+  if (normalized.includes("confidence")) return 0;
+  if (normalized.includes("review")) return true;
+  if (normalized.includes("payload") || normalized.includes("meta")) return {};
+  return utilityProvider;
+}
+
 function isInvalidDateColumn(error: { message?: string; code?: string }, relation: string) {
   const message = `${error.message ?? ""} ${error.code ?? ""}`.toLowerCase();
   return relation === "bills" && message.includes("invalid input syntax for type date");
@@ -272,7 +296,7 @@ async function insertWithSchemaFallback(
 
     const nullConstraintColumn = getNullConstraintColumn(result.error, relation);
     if (nullConstraintColumn && relation === "bills") {
-      const nextValue = getLegacyBillsValue(nullConstraintColumn, payload);
+      const nextValue = getLegacyBillsValue(nullConstraintColumn, payload) ?? getGenericBillsFallbackValue(nullConstraintColumn, payload);
       if (nextValue !== undefined && (workingPayload[nullConstraintColumn] == null || workingPayload[nullConstraintColumn] === "")) {
         workingPayload[nullConstraintColumn] = nextValue;
         continue;
