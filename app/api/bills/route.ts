@@ -117,10 +117,16 @@ export async function POST(request: Request) {
     uploaded_by: auth.user.id,
     provider: utilityProvider,
     utility_provider: utilityProvider,
+    category: billType,
+    type: billType,
     bill_type: billType,
     amount,
+    total: amount,
     due_date: dueDate || null,
+    due: dueDate || null,
     billing_period: billingPeriod || null,
+    period: billingPeriod || null,
+    address: serviceAddress || null,
     service_address: serviceAddress || null,
     split_mode: splitMode,
     status: "scheduled",
@@ -186,6 +192,39 @@ function getMissingColumn(error: { message?: string; code?: string }, relation: 
   return match?.[1] ?? null;
 }
 
+function getNullConstraintColumn(error: { message?: string; code?: string }, relation: string) {
+  const message = `${error.message ?? ""} ${error.code ?? ""}`;
+  const match = message.match(new RegExp(`null value in column "([^"]+)" of relation "${relation}" violates not-null constraint`, "i"));
+  return match?.[1] ?? null;
+}
+
+function getLegacyBillsValue(column: string, payload: Record<string, unknown>) {
+  const utilityProvider = payload.utility_provider ?? payload.provider;
+  const billType = payload.bill_type ?? payload.category ?? payload.type;
+  const amount = payload.amount ?? payload.total;
+  const dueDate = payload.due_date ?? payload.due;
+  const billingPeriod = payload.billing_period ?? payload.period;
+  const serviceAddress = payload.service_address ?? payload.address;
+
+  const fallbacks: Record<string, unknown> = {
+    provider: utilityProvider,
+    utility_provider: utilityProvider,
+    category: billType,
+    type: billType,
+    bill_type: billType,
+    total: amount,
+    amount,
+    due: dueDate,
+    due_date: dueDate,
+    period: billingPeriod,
+    billing_period: billingPeriod,
+    address: serviceAddress,
+    service_address: serviceAddress
+  };
+
+  return fallbacks[column];
+}
+
 async function insertWithSchemaFallback(
   supabase: Awaited<ReturnType<typeof createClient>>,
   relation: string,
@@ -200,6 +239,15 @@ async function insertWithSchemaFallback(
   while (true) {
     const result = await supabase.from(relation).insert(workingPayload).select(selectColumns.join(",")).single();
     if (!result.error) return { data: result.data, error: null, removedColumns };
+
+    const nullConstraintColumn = getNullConstraintColumn(result.error, relation);
+    if (nullConstraintColumn && relation === "bills") {
+      const nextValue = getLegacyBillsValue(nullConstraintColumn, payload);
+      if (nextValue !== undefined && (workingPayload[nullConstraintColumn] == null || workingPayload[nullConstraintColumn] === "")) {
+        workingPayload[nullConstraintColumn] = nextValue;
+        continue;
+      }
+    }
 
     const missingColumn = getMissingColumn(result.error, relation);
     if (!missingColumn || !(missingColumn in workingPayload)) {
